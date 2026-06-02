@@ -1,3 +1,4 @@
+=== tracer ===
 /*
  * tracer.c - Real-time terminal ray tracer in C
  *
@@ -197,3 +198,4 @@ int main(void) {
     }
     return 0;
 }
+
