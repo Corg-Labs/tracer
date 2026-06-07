@@ -1,199 +1,257 @@
-# Real-Time Ray Tracer in C
+# 2D Ray Tracer in C
 
-A terminal-based, full-color ray tracer written entirely in C.
+A simple real-time 2D ray tracer written entirely in C.
 
-This program renders three reflective spheres on a checkered ground plane under a gradient sky, with soft shadows, one bounce of reflection, and a camera that orbits the scene in real time — all using only standard C and ANSI 256-color escape sequences.
+This program emits thousands of rays from a movable camera position and traces them against a scene composed of circles. Every ray computes its closest intersection, estimates surface lighting using geometric normals, and visualizes the result in real time.
 
-No graphics library. No GPU. Just rays, vectors, and stdout.
+The goal of the project is to demonstrate the core ideas behind ray tracing without requiring complex 3D mathematics, matrices, or rendering APIs.
 
-This project focuses on learning:
+No game engine.
+No physics engine.
+No GPU ray tracing.
 
-- ray-sphere and ray-plane intersection
-- vector math in 3D
-- diffuse + shadow shading
-- recursive ray tracing for reflections
-- camera basis construction
-- ANSI 256-color terminal rendering
-- frame buffering
-- real-time rendering loops in C
+Just geometry, vectors, and rays.
 
 ---
 
-# Features
+## This Project Focuses On
 
-- Three reflective spheres on a checkered plane
-- Gradient sky with horizon falloff
-- Lambertian diffuse shading
-- Hard shadows against all spheres
-- One bounce of reflection per ray
-- Orbiting camera
-- Gamma-corrected ANSI 256-color output
-- Pure terminal rendering
-- Written entirely in C
-- Standard libraries only
+* Ray casting fundamentals
+* Ray-circle intersection testing
+* Vector math in 2D
+* Surface normal computation
+* Lambertian diffuse lighting
+* Real-time rendering loops
+* Interactive camera movement
+* Geometric visibility testing
+* Basic rendering pipelines
+
+---
+
+## Features
+
+* Real-time ray tracing
+* Interactive camera controlled by mouse
+* Multiple circle primitives
+* Dynamic point light source
+* Lambertian diffuse shading
+* Surface normal visualization through lighting
+* Closest-hit intersection testing
+* Pure geometric rendering
+* Written entirely in C
 
 ---
 
 # How It Works
 
-For every pixel in the terminal, the program builds a ray from the camera through that pixel and *traces* it through the scene. It checks the ray against every sphere and the ground plane to find the closest hit, then computes how much light reaches that surface from the scene's single light source.
+For every frame, the renderer emits rays in every direction from the camera position.
 
-For every frame:
+Each ray searches for the closest object it intersects.
 
-- Rotate the camera around the scene
-- Build a camera basis (forward, right, up)
-- For each pixel, construct a ray
-- Trace the ray: find the closest intersection
-- At the hit point: compute diffuse lighting + shadow + reflection
-- Convert the final color to an ANSI 256-color index
-- Output the colored pixel as a space with a colored background
-- Move the camera forward in its orbit
+When an intersection is found, the renderer computes the surface normal, determines the direction to the light source, and calculates how much light reaches that point.
 
-The animation repeats forever, with the camera continuously sweeping around the scene.
+The result is a simple but complete ray tracing pipeline.
 
 ---
 
-# Tutorial / Rendering Pipeline
+## Rendering Pipeline
 
-## 1. Vector Math
+### 1. Camera Position
 
-Everything is built on a tiny vector library:
+The camera acts as the origin of all rays.
 
-```
-typedef struct { float x, y, z; } V3;
-V3 vadd(V3 a, V3 b);
-V3 vsub(V3 a, V3 b);
-V3 vmul(V3 a, float s);
-float vdot(V3 a, V3 b);
-V3 vcross(V3 a, V3 b);
-V3 vnorm(V3 a);
-V3 vreflect(V3 i, V3 n);
+In this implementation, the camera follows the mouse position:
+
+```c
+camera.x = GetMouseX();
+camera.y = GetMouseY();
 ```
 
-3D rendering is mostly just *applying these in the right order*.
+Moving the mouse changes where rays originate.
 
 ---
 
-## 2. Camera Basis
+### 2. Ray Generation
 
-Every frame, the camera position orbits the origin:
+The renderer emits rays in all directions around the camera.
 
-```
-V3 cam = v3(R * cos(angle), height, R * sin(angle));
-```
+For every ray:
 
-From the camera position we build an orthonormal basis pointing at the scene:
-
-```
-fwd   = normalize(target - cam);
-right = normalize(cross(fwd, world_up));
-up    = cross(right, fwd);
+```c
+angle = 2π * i / NUM_RAYS;
 ```
 
-These three vectors define the camera's coordinate system.
+A direction vector is constructed:
+
+```c
+dir.x = cos(angle);
+dir.y = sin(angle);
+```
+
+Each ray now represents a line extending infinitely through the scene.
 
 ---
 
-## 3. Ray Construction
+### 3. Circle Geometry
 
-For each pixel `(x, y)`, normalized device coordinates `(u, v)` are mapped through the camera basis:
+Objects in the scene are circles:
 
+```c
+typedef struct {
+    Vec2 center;
+    float radius;
+} Circle;
 ```
-dir = normalize(right*u*FOV + up*v*FOV*aspect + fwd);
-```
 
-The `aspect` factor compensates for terminal characters being about twice as tall as they are wide.
+Every circle is defined by:
+
+* Center position
+* Radius
+* Surface color
+
+These circles act as the scene geometry.
 
 ---
 
-## 4. Ray-Sphere Intersection
+### 4. Ray-Circle Intersection
 
-A ray `P(t) = O + t D` hits a sphere of center `C` and radius `r` when:
+Every ray is tested against every circle.
 
-```
-|O + t D - C|^2 = r^2
+A ray intersects a circle whenever:
+
+```text
+|P(t) - C|² = r²
 ```
 
-Expanding gives a quadratic in `t` with closed-form solution:
+where:
 
+* P(t) is the ray position
+* C is the circle center
+* r is the radius
+
+Expanding this equation produces a quadratic.
+
+The discriminant determines whether a hit occurred:
+
+```c
+h = b*b - c;
 ```
-oc   = O - C
-b    = dot(oc, D)
-c    = dot(oc, oc) - r*r
-disc = b*b - c
-if disc < 0   -> no hit
-t    = -b - sqrt(disc)   // take the nearer root
+
+If:
+
+```c
+h < 0
 ```
+
+the ray misses the circle.
+
+Otherwise the nearest positive root is selected.
+
+This gives the distance from the camera to the hit point.
 
 ---
 
-## 5. Ray-Plane Intersection
+### 5. Closest Hit Selection
 
-The ground plane `y = Y0` is even simpler:
+A ray may intersect multiple circles.
 
+The renderer stores:
+
+```c
+nearest_distance
 ```
-t = (Y0 - O.y) / D.y
-```
 
-Only valid if `t > 0` and `D.y != 0`.
+and updates it whenever a closer intersection is found.
+
+Only the closest object is rendered.
+
+This reproduces visibility naturally without requiring depth buffers.
 
 ---
 
-## 6. Shading
+### 6. Hit Point Computation
 
-For each hit point we compute:
+Once the nearest intersection is known:
 
-- **Albedo** — the surface color (or checkered pattern for the ground)
-- **Diffuse** — `max(0, dot(normal, light_dir))`
-- **Shadow** — shoot a ray from the hit point toward the light, see if any sphere blocks it
-- **Reflection** — recursively trace a ray bounced off the surface
-
-The final color is:
-
+```c
+hit = origin + direction * distance;
 ```
-ambient + diffuse * shadow * albedo + reflectivity * reflected_color
-```
+
+This gives the exact location where the ray strikes the object.
+
+All lighting calculations happen at this point.
 
 ---
 
-## 7. Sky Gradient
+### 7. Surface Normals
 
-When a ray hits nothing, it samples the sky — a vertical gradient from warm white near the horizon to blue overhead:
+A surface normal describes which direction the surface faces.
 
+For a circle:
+
+```c
+normal = normalize(hit - center);
 ```
-t = 0.5 * (ray.y + 1.0);
-sky = mix(white, blue, t);
-```
+
+The normal always points outward from the surface.
+
+Normals are essential for lighting calculations.
 
 ---
 
-## 8. ANSI 256-Color Output
+### 8. Diffuse Lighting
 
-Each pixel's RGB value is gamma-corrected and quantized to the 6x6x6 RGB cube of ANSI 256 colors:
+A point light illuminates the scene.
 
-```
-index = 16 + 36 * R + 6 * G + B    (with R, G, B in [0, 5])
-```
+The light direction is:
 
-The pixel is then printed as a space with that color as its background:
-
-```
-printf("\x1b[48;5;%dm ", index);
+```c
+lightDir = normalize(light - hit);
 ```
 
-Adjacent pixels with the same color share one escape code to keep output fast.
+Brightness is computed using Lambert's cosine law:
+
+```c
+brightness =
+    max(dot(normal, lightDir), 0);
+```
+
+This produces realistic shading:
+
+* Surfaces facing the light become brighter
+* Surfaces facing away become darker
+
+The effect emerges entirely from vector math.
 
 ---
 
-## 9. Terminal Rendering
+### 9. Color Shading
 
-Each frame:
+The final color is scaled by the computed brightness:
 
-- Move cursor home: `printf("\x1b[H");`
-- Render each row into a buffer, flush once per row
-- Reset color at the end of each row
+```c
+finalColor =
+    objectColor * brightness;
+```
 
-This redraws frames in-place to create animation.
+Brighter surfaces retain more of their original color.
+
+Darker surfaces approach black.
+
+This creates the illusion of depth and curvature.
+
+---
+
+### 10. Rendering
+
+Once all rays have been traced:
+
+* Rays are drawn
+* Hit points are rendered
+* Circles are displayed
+* Camera and light source are visualized
+
+The entire process repeats every frame.
 
 ---
 
@@ -201,79 +259,90 @@ This redraws frames in-place to create animation.
 
 Compile using:
 
+```bash
+gcc tracer2d.c -o tracer2d -lraylib -lm
 ```
-gcc tracer.c -o tracer -lm
-```
-
-Or just:
-
-```
-make
-```
-
-The `-lm` flag links the math library.
 
 ---
 
 # Run
 
-```
-./tracer
+```bash
+./tracer2d
 ```
 
-Press `Ctrl+C` to exit.
+Move the mouse to change the ray origin.
 
-For best results, run in a 256-color terminal at roughly 80 columns × 32 rows.
+The scene updates in real time.
 
 ---
 
 # Customizing
 
-Edit the constants at the top of `tracer.c`:
+Try modifying:
 
-- `WIDTH`, `HEIGHT` — resolution (each cell is one terminal character)
-- `MAX_DEPTH` — recursion depth for reflections (try 3 or 4)
-- `spheres[]` — change colors, positions, sizes, and reflectivity
-- `LIGHT` — move the light source
+```c
+NUM_RAYS
+```
 
-Try adding a fourth sphere, or making one of them a perfect mirror with `reflect = 1.0`.
+Higher values produce smoother lighting.
+
+---
+
+Add more circles:
+
+```c
+{ {300, 300}, 80, RED }
+```
+
+Experiment with:
+
+* Circle positions
+* Circle sizes
+* Number of rays
+* Light position
+* Window resolution
 
 ---
 
 # Concepts Practiced
 
-- Ray tracing
-- Ray-primitive intersection (sphere, plane)
-- Vector math in 3D
-- Phong-style diffuse + shadow shading
-- Recursive reflection
-- Camera basis construction
-- Perspective ray generation
-- ANSI 256-color rendering
-- Gamma correction
-- Frame buffering
-- Animation loops
-- Terminal graphics
-- Real-time rendering
+* Ray tracing
+* Ray casting
+* Ray-circle intersection
+* Vector mathematics
+* Surface normals
+* Diffuse lighting
+* Closest-hit visibility
+* Real-time rendering
+* Interactive graphics
+* Computational geometry
+* Rendering pipelines
 
 ---
 
 # Dependencies
 
-Standard C libraries only:
+Only:
 
-- `stdio.h`
-- `stdlib.h`
-- `string.h`
-- `math.h`
-- `unistd.h`
+```text
+raylib
+math.h
+```
 
-No graphics engine required.
+No game engine required.
 
 ---
 
 # Inspiration
 
-This is a tiny version of the classic ray tracer from Peter Shirley's *"Ray Tracing in One Weekend"* series, ported to a 256-color terminal.
+This project is a minimal introduction to ray tracing.
 
-The whole point: rendering is just math, applied to every pixel, every frame.
+Before reflections, shadows, global illumination, and physically based rendering, every ray tracer begins with a single question:
+
+"What is the first object this ray hits?"
+
+Everything else is built on top of that idea.
+
+The purpose of this project is to make that process visible and easy to understand.
+
